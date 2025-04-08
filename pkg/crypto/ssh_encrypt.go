@@ -6,26 +6,60 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
-	"strings" // Added missing import for strings
-)
+	"strings"
 
-import (
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // SSHEncryptor handles encryption and decryption using SSH public/private keys
 type SSHEncryptor struct {
 	publicKeys  []ssh.PublicKey
 	privateKeys []ssh.Signer
+	agentClient agent.Agent
+	useAgent    bool
 }
 
 // NewSSHEncryptor creates a new encryptor using SSH keys
-func NewSSHEncryptor() (*SSHEncryptor, error) {
-	return &SSHEncryptor{
+// The useAgent parameter determines whether to attempt connecting to an SSH agent
+func NewSSHEncryptor(useAgent bool) (*SSHEncryptor, error) {
+	encryptor := &SSHEncryptor{
 		publicKeys:  []ssh.PublicKey{},
 		privateKeys: []ssh.Signer{},
-	}, nil
+		useAgent:    useAgent,
+	}
+
+	// Try to connect to the SSH agent if allowed
+	if useAgent {
+		if err := encryptor.connectToAgent(); err != nil {
+			// Just log this error, don't fail as we'll fall back to key files
+			_, printErr := fmt.Fprintf(os.Stderr, "Note: SSH agent not available: %v\n", err)
+			if printErr != nil {
+				// If we can't even write to stderr, just continue silently
+				// This is an edge case that shouldn't happen in normal operation
+			}
+		}
+	}
+
+	return encryptor, nil
+}
+
+// connectToAgent attempts to connect to the SSH agent
+func (e *SSHEncryptor) connectToAgent() error {
+	socket := os.Getenv("SSH_AUTH_SOCK")
+	if socket == "" {
+		return errors.New("SSH_AUTH_SOCK environment variable not set")
+	}
+
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		return fmt.Errorf("failed to connect to SSH agent: %w", err)
+	}
+
+	e.agentClient = agent.NewClient(conn)
+	return nil
 }
 
 // AddPublicKeyFromFile adds a public key from a file for encryption
@@ -46,6 +80,18 @@ func (e *SSHEncryptor) AddPublicKeyFromFile(path string) error {
 
 // AddPrivateKeyFromFile adds a private key from a file for decryption
 func (e *SSHEncryptor) AddPrivateKeyFromFile(path string, passphrase []byte) error {
+	// If we're using the SSH agent and we've connected to it, try to use it
+	if e.useAgent && e.agentClient != nil {
+		signers, err := e.agentClient.Signers()
+		if err == nil && len(signers) > 0 {
+			// Add all signers from the agent
+			e.privateKeys = append(e.privateKeys, signers...)
+			fmt.Println("Successfully loaded keys from SSH agent")
+			return nil
+		}
+	}
+
+	// Fall back to loading from file
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read private key file: %w", err)
@@ -86,8 +132,7 @@ func (e *SSHEncryptor) Encrypt(data []byte) (string, error) {
 	for _, pubKey := range e.publicKeys {
 		// In a real implementation, we would properly implement hybrid encryption
 		// For now, we'll simulate it using SSH format
-		// Fixed: multiple-value ssh.NewPublicKey(pubKey)
-		encryptedKey := pubKey.Marshal() // Using the pubKey.Marshal() method directly
+		encryptedKey := pubKey.Marshal()
 		encryptedBlocks = append(encryptedBlocks, base64.StdEncoding.EncodeToString(encryptedKey))
 	}
 

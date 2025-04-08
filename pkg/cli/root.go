@@ -1,22 +1,16 @@
 package cli
 
 import (
-	"context" // Add missing context import
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 
-	"github.com/spf13/cobra"
 	"github.com/rejoice4156/passh/pkg/crypto"
 	"github.com/rejoice4156/passh/pkg/storage"
-)
-
-// contextKey is a custom type for context keys to avoid collisions
-type contextKey string
-
-// Context keys
-const (
-	encryptorKey contextKey = "encryptor"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // Default SSH key paths
@@ -31,6 +25,7 @@ func NewRootCmd() *cobra.Command {
 	var storeDir string
 	var publicKeyPath string
 	var privateKeyPath string
+	var noAgent bool
 
 	rootCmd := &cobra.Command{
 		Use:   "passh",
@@ -41,7 +36,7 @@ func NewRootCmd() *cobra.Command {
 				return nil
 			}
 
-			return setupEncryptor(cmd, publicKeyPath, privateKeyPath)
+			return setupEncryptor(cmd, publicKeyPath, privateKeyPath, noAgent)
 		},
 	}
 
@@ -49,6 +44,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.PersistentFlags().StringVar(&storeDir, "store", "", "Password store directory (default: ~/.passh)")
 	rootCmd.PersistentFlags().StringVar(&publicKeyPath, "public-key", "", "SSH public key path (default: ~/.ssh/id_rsa.pub or ~/.ssh/id_ed25519.pub)")
 	rootCmd.PersistentFlags().StringVar(&privateKeyPath, "private-key", "", "SSH private key path (default: ~/.ssh/id_rsa or ~/.ssh/id_ed25519)")
+	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "Don't use SSH agent even if available")
 
 	// Add subcommands
 	rootCmd.AddCommand(
@@ -63,12 +59,14 @@ func NewRootCmd() *cobra.Command {
 }
 
 // setupEncryptor initializes the SSH encryptor and attaches it to the command context
-func setupEncryptor(cmd *cobra.Command, publicKeyPath, privateKeyPath string) error {
-	encryptor, err := crypto.NewSSHEncryptor()
+func setupEncryptor(cmd *cobra.Command, publicKeyPath, privateKeyPath string, noAgent bool) error {
+	// Pass the inverse of noAgent to indicate whether to use the agent
+	encryptor, err := crypto.NewSSHEncryptor(!noAgent)
 	if err != nil {
 		return fmt.Errorf("failed to create encryptor: %w", err)
 	}
 
+	// Rest of the function remains the same...
 	// Try to find SSH keys if not specified
 	if publicKeyPath == "" {
 		for _, name := range defaultSSHPublicKeys {
@@ -102,21 +100,43 @@ func setupEncryptor(cmd *cobra.Command, publicKeyPath, privateKeyPath string) er
 	if err := encryptor.AddPublicKeyFromFile(publicKeyPath); err != nil {
 		return fmt.Errorf("failed to load public key: %w", err)
 	}
-	// Store the encryptor in the command context
-	ctx := context.WithValue(cmd.Context(), encryptorKey, encryptor)
-	cmd.SetContext(ctx)
-	// This is simplified for now
-	if err := encryptor.AddPrivateKeyFromFile(privateKeyPath, nil); err != nil {
+
+	// First try without passphrase
+	err = encryptor.AddPrivateKeyFromFile(privateKeyPath, nil)
+	if err != nil && isPassphraseError(err) {
+		// If it fails due to passphrase, prompt for it
+		fmt.Printf("Enter passphrase for key '%s': ", privateKeyPath)
+		passphrase, err := term.ReadPassword(syscall.Stdin)
+		if err != nil {
+			return fmt.Errorf("failed to read passphrase: %w", err)
+		}
+		fmt.Println() // Add newline after passphrase input
+
+		// Try again with the passphrase
+		if err := encryptor.AddPrivateKeyFromFile(privateKeyPath, passphrase); err != nil {
+			return fmt.Errorf("failed to load private key with passphrase: %w", err)
+		}
+	} else if err != nil {
 		return fmt.Errorf("failed to load private key: %w", err)
 	}
-	
+
+	// Store the encryptor in the command context
+	ctx := context.WithValue(cmd.Context(), "encryptor", encryptor)
+	cmd.SetContext(ctx)
+
 	return nil
+}
+
+// isPassphraseError checks if an error is due to a missing passphrase
+func isPassphraseError(err error) bool {
+	return err != nil && (string(err.Error()) == "ssh: this private key is passphrase protected" ||
+		string(err.Error()) == "failed to parse private key: ssh: this private key is passphrase protected")
 }
 
 // getStore gets the storage from command context
 func getStore(cmd *cobra.Command) (*storage.Store, error) {
 	storeDir, _ := cmd.Flags().GetString("store")
-	encryptor := cmd.Context().Value(encryptorKey).(*crypto.SSHEncryptor)
+	encryptor := cmd.Context().Value("encryptor").(*crypto.SSHEncryptor)
 
 	return storage.NewStore(storeDir, encryptor)
 }
