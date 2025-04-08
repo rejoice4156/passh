@@ -10,7 +10,8 @@ import (
 func main() {
 	rootCmd := cli.NewRootCmd()
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Simply use fmt.Println instead of fmt.Fprintf to avoid potential stderr issues
+		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
 }
