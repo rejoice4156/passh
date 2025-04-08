@@ -26,8 +26,8 @@ type SSHEncryptor struct {
 // The useAgent parameter determines whether to attempt connecting to an SSH agent
 func NewSSHEncryptor(useAgent bool) (*SSHEncryptor, error) {
 	encryptor := &SSHEncryptor{
-		publicKeys:  []ssh.PublicKey{},
-		privateKeys: []ssh.Signer{},
+		publicKeys:  nil, // Changed from []ssh.PublicKey{}
+		privateKeys: nil, // Changed from []ssh.Signer{}
 		useAgent:    useAgent,
 	}
 
@@ -55,7 +55,7 @@ func (e *SSHEncryptor) connectToAgent() error {
 
 	conn, err := net.Dial("unix", socket)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SSH agent: %w", err)
+		return fmt.Errorf("failed to connect to SSH agent, and could not proceed with agent keys: %w", err)
 	}
 
 	e.agentClient = agent.NewClient(conn)
@@ -80,7 +80,7 @@ func (e *SSHEncryptor) AddPublicKeyFromFile(path string) error {
 
 // AddPrivateKeyFromFile adds a private key from a file for decryption
 func (e *SSHEncryptor) AddPrivateKeyFromFile(path string, passphrase []byte) error {
-	// If we're using the SSH agent and we've connected to it, try to use it
+	// If we're using the SSH agent, and we've connected to it, try to use it
 	if e.useAgent && e.agentClient != nil {
 		signers, err := e.agentClient.Signers()
 		if err == nil && len(signers) > 0 {
@@ -128,7 +128,7 @@ func (e *SSHEncryptor) Encrypt(data []byte) (string, error) {
 	// And then use the random key for actual encryption
 	// This is a simple implementation - a production version would use proper hybrid encryption
 
-	encryptedBlocks := []string{}
+	var encryptedBlocks []string
 	for _, pubKey := range e.publicKeys {
 		// In a real implementation, we would properly implement hybrid encryption
 		// For now, we'll simulate it using SSH format

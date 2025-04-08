@@ -8,7 +8,19 @@ import (
 )
 
 func main() {
+	// Use the provided date and user
 	fmt.Println("Running passh test suite...")
+	fmt.Println("Date: 2025-04-08 11:14:19")
+
+	// Get username, with fallback if environment variable is missing
+	username := os.Getenv("USER")
+	if username == "" {
+		username = os.Getenv("USERNAME") // For Windows
+		if username == "" {
+			username = "rejoice4156" // Fallback to provided username
+		}
+	}
+	fmt.Printf("User: %s\n", username)
 
 	// Get the project root directory
 	root, err := os.Getwd()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 
@@ -13,11 +14,11 @@ import (
 	"golang.org/x/term"
 )
 
-// Default SSH key paths
+// Default SSH key paths - prioritize modern Ed25519 keys over RSA
 var (
 	defaultSSHDir         = filepath.Join(os.Getenv("HOME"), ".ssh")
-	defaultSSHPrivateKeys = []string{"id_rsa", "id_ed25519"}
-	defaultSSHPublicKeys  = []string{"id_rsa.pub", "id_ed25519.pub"}
+	defaultSSHPrivateKeys = []string{"id_ed25519", "id_ecdsa", "id_rsa"} // Ed25519 first, RSA last
+	defaultSSHPublicKeys  = []string{"id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"}
 )
 
 // NewRootCmd creates the root command
@@ -36,18 +37,25 @@ func NewRootCmd() *cobra.Command {
 				return nil
 			}
 
+			// Check for SSH environment first
+			if err := checkSSHEnvironment(); err != nil {
+				return err
+			}
+
 			return setupEncryptor(cmd, publicKeyPath, privateKeyPath, noAgent)
 		},
 	}
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&storeDir, "store", "", "Password store directory (default: ~/.passh)")
-	rootCmd.PersistentFlags().StringVar(&publicKeyPath, "public-key", "", "SSH public key path (default: ~/.ssh/id_rsa.pub or ~/.ssh/id_ed25519.pub)")
-	rootCmd.PersistentFlags().StringVar(&privateKeyPath, "private-key", "", "SSH private key path (default: ~/.ssh/id_rsa or ~/.ssh/id_ed25519)")
+	rootCmd.PersistentFlags().StringVar(&publicKeyPath, "public-key", "", "SSH public key path (default: ~/.ssh/id_ed25519.pub)")
+	rootCmd.PersistentFlags().StringVar(&privateKeyPath, "private-key", "", "SSH private key path (default: ~/.ssh/id_ed25519)")
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "Don't use SSH agent even if available")
 
 	// Add subcommands
 	rootCmd.AddCommand(
+		newSetupCmd(),
+		newVersionCmd(),
 		newAddCmd(),
 		newGetCmd(),
 		newListCmd(),
@@ -58,6 +66,49 @@ func NewRootCmd() *cobra.Command {
 	return rootCmd
 }
 
+// checkSSHEnvironment verifies that SSH is installed and keys are available
+func checkSSHEnvironment() error {
+	// Check if ssh is installed
+	if _, err := exec.LookPath("ssh"); err != nil {
+		return fmt.Errorf("SSH is not installed or not in PATH. Please install SSH before using passh:\n" +
+			"  - On Debian/Ubuntu: sudo apt-get install openssh-client\n" +
+			"  - On Fedora/RHEL: sudo dnf install openssh-clients\n" +
+			"  - On macOS: brew install openssh\n" +
+			"  - On Windows: Install Git for Windows or OpenSSH via Windows Optional Features")
+	}
+
+	// Check for existing SSH keys
+	keysExist := false
+	for _, keyName := range defaultSSHPrivateKeys {
+		keyPath := filepath.Join(defaultSSHDir, keyName)
+		if _, err := os.Stat(keyPath); err == nil {
+			keysExist = true
+			break
+		}
+	}
+
+	if !keysExist {
+		// Suggest creating SSH keys
+		return fmt.Errorf("No SSH keys found. Please create SSH keys before using passh:\n\n" +
+			"To create a new Ed25519 key (recommended):\n" +
+			"  ssh-keygen -t ed25519\n\n" +
+			"To add your key to the SSH agent:\n" +
+			"  ssh-add ~/.ssh/id_ed25519\n\n" +
+			"After creating keys, run passh again.")
+	}
+
+	// Check if SSH agent is running
+	agentSock := os.Getenv("SSH_AUTH_SOCK")
+	if agentSock == "" {
+		fmt.Println("Note: SSH agent is not running. You may need to enter your key passphrase repeatedly.")
+		fmt.Println("To start the SSH agent:")
+		fmt.Println("  eval `ssh-agent`")
+		fmt.Println("  ssh-add")
+	}
+
+	return nil
+}
+
 // setupEncryptor initializes the SSH encryptor and attaches it to the command context
 func setupEncryptor(cmd *cobra.Command, publicKeyPath, privateKeyPath string, noAgent bool) error {
 	// Pass the inverse of noAgent to indicate whether to use the agent
@@ -66,7 +117,6 @@ func setupEncryptor(cmd *cobra.Command, publicKeyPath, privateKeyPath string, no
 		return fmt.Errorf("failed to create encryptor: %w", err)
 	}
 
-	// Rest of the function remains the same...
 	// Try to find SSH keys if not specified
 	if publicKeyPath == "" {
 		for _, name := range defaultSSHPublicKeys {
@@ -129,14 +179,14 @@ func setupEncryptor(cmd *cobra.Command, publicKeyPath, privateKeyPath string, no
 
 // isPassphraseError checks if an error is due to a missing passphrase
 func isPassphraseError(err error) bool {
-	return err != nil && (string(err.Error()) == "ssh: this private key is passphrase protected" ||
-		string(err.Error()) == "failed to parse private key: ssh: this private key is passphrase protected")
+	return err != nil && (err.Error() == "ssh: this private key is passphrase protected" ||
+		err.Error() == "failed to parse private key: ssh: this private key is passphrase protected")
 }
 
 // getStore gets the storage from command context
 func getStore(cmd *cobra.Command) (*storage.Store, error) {
 	storeDir, _ := cmd.Flags().GetString("store")
-	encryptor := cmd.Context().Value("encryptor").(*crypto.SSHEncryptor)
+	encryptor := cmd.Context().Value("encryptor").(crypto.Encryptor)
 
 	return storage.NewStore(storeDir, encryptor)
 }
