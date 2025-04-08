@@ -12,11 +12,11 @@ import (
 // Store handles the storage and retrieval of password entries
 type Store struct {
 	rootDir   string
-	encryptor *crypto.SSHEncryptor
+	encryptor crypto.Encryptor
 }
 
 // NewStore creates a new password store
-func NewStore(rootDir string, encryptor *crypto.SSHEncryptor) (*Store, error) {
+func NewStore(rootDir string, encryptor crypto.Encryptor) (*Store, error) {
 	if rootDir == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
