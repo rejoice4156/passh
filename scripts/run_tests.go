@@ -10,7 +10,7 @@ import (
 func main() {
 	// Use the provided date and user
 	fmt.Println("Running passh test suite...")
-	fmt.Println("Date: 2025-04-08 11:14:19")
+	fmt.Println("Date: 2025-04-08 11:32:27")
 
 	// Get username, with fallback if environment variable is missing
 	username := os.Getenv("USER")

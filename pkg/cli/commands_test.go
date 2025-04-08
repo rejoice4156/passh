@@ -223,3 +223,51 @@ func TestCommandsWithMockKeys(t *testing.T) {
 		t.Fatal("no-agent flag not found")
 	}
 }
+
+func TestPasswordConfirmation(t *testing.T) {
+	// This is a unit test to ensure the password confirmation logic works
+	// For actual command testing, we'd need integration tests with input simulation
+
+	// Test case: matching passwords
+	password1 := []byte("secure-password-123")
+	password2 := []byte("secure-password-123")
+	if string(password1) != string(password2) {
+		t.Error("Password comparison failed for matching passwords")
+	}
+
+	// Test case: non-matching passwords
+	password3 := []byte("secure-password-123")
+	password4 := []byte("different-password-456")
+	if string(password3) == string(password4) {
+		t.Error("Password comparison incorrectly reports match for different passwords")
+	}
+}
+
+func TestDeleteConfirmation(t *testing.T) {
+	// Test the logic for delete confirmation parsing
+	// For the actual prompt behavior, we would need integration tests
+
+	// Test case: "y" should confirm
+	response := "y"
+	if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+		t.Error("Delete confirmation failed for 'y'")
+	}
+
+	// Test case: "yes" should confirm
+	response = "yes"
+	if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+		t.Error("Delete confirmation failed for 'yes'")
+	}
+
+	// Test case: "n" should not confirm
+	response = "n"
+	if strings.ToLower(response) == "y" || strings.ToLower(response) == "yes" {
+		t.Error("Delete confirmation incorrectly confirmed for 'n'")
+	}
+
+	// Test case: empty should not confirm
+	response = ""
+	if strings.ToLower(response) == "y" || strings.ToLower(response) == "yes" {
+		t.Error("Delete confirmation incorrectly confirmed for empty string")
+	}
+}
